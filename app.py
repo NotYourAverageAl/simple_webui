@@ -1,8 +1,8 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, url_for, session
 import os
 import json
-import subprocess
 import requests
+from dotenv import load_dotenv
 from duckduckgo_search import DDGS
 from PyPDF2 import PdfReader
 from docx import Document
@@ -10,37 +10,53 @@ import re
 from urllib.parse import urlparse
 import html
 
+load_dotenv()
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
+app.secret_key = os.getenv('SECRET_KEY', 'supersecret')
+
+USERNAME = os.getenv('USERNAME', 'admin')
+PASSWORD = os.getenv('PASSWORD', 'password')
+FLOWISE_URL = os.getenv('FLOWISE_URL', 'http://localhost:3000')
+FLOWISE_API_KEY = os.getenv('FLOWISE_API_KEY', '')
 
 # Theme loader
 @app.context_processor
 def inject_theme():
     return dict(theme=request.cookies.get('theme', 'dark'))
 
-# Scan Ollama models
-@app.route('/api/models')
-def get_models():
+# Simple login system
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        if request.form.get('username') == USERNAME and request.form.get('password') == PASSWORD:
+            session['logged_in'] = True
+            return redirect(url_for('index'))
+        return render_template('login.html', error='Invalid credentials')
+    return render_template('login.html')
+
+@app.before_request
+def require_login():
+    if request.endpoint in ('login', 'static', 'uploaded_file'):
+        return
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
+
+# List Flowise chatflows
+@app.route('/api/flows')
+def get_flows():
     try:
-        # First try with JSON output
-        result = subprocess.run(['ollama', 'list', '--json'], capture_output=True, text=True)
-        if result.returncode == 0 and result.stdout.strip():
-            models = [model['name'] for model in json.loads(result.stdout)]
-            return jsonify(models)
-        
-        # Fallback to table parsing if JSON fails
-        result = subprocess.run(['ollama', 'list'], capture_output=True, text=True)
-        if result.returncode == 0 and result.stdout.strip():
-            models = []
-            for line in result.stdout.splitlines()[1:]:
-                if line.strip():
-                    model_name = line.split()[0]
-                    if '/' in model_name:  # Handle names like 'library/llama3'
-                        model_name = model_name.split('/')[-1]
-                    models.append(model_name)
-            return jsonify(models)
-        
-        return jsonify([])  # Return empty list if no models found
+        headers = {}
+        if FLOWISE_API_KEY:
+            headers['Authorization'] = f'Bearer {FLOWISE_API_KEY}'
+        resp = requests.get(f"{FLOWISE_URL}/chatflows", headers=headers)
+        resp.raise_for_status()
+        flows = resp.json()
+        result = [{
+            'id': f.get('_id') or f.get('id'),
+            'name': f.get('name', 'Unnamed')
+        } for f in flows]
+        return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -74,74 +90,61 @@ def extract_text_from_file(filepath):
 def chat():
     try:
         data = request.json
-        model = data.get('model', 'llama3')
+        flow_id = data.get('flow')
         messages = data.get('messages', [])
         options = data.get('options', {})
         web_search = data.get('webSearch', False)
-        
-        # Ollama API integration
-        ollama_url = 'http://localhost:11434/api/chat'
+
+        user_messages = [m['content'] for m in messages if m.get('role') == 'user']
+        question = user_messages[-1] if user_messages else ''
+
         payload = {
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "options": {
+            "question": question,
+            "history": [
+                {
+                    "role": "userMessage" if m['role'] == 'user' else 'apiMessage',
+                    "content": m['content']
+                } for m in messages
+            ],
+            "overrideConfig": {
                 "temperature": options.get('temperature', 0.8),
                 "top_p": options.get('topP', 0.9),
-                "top_k": options.get('topK', 40),
-                "repeat_penalty": options.get('repeat_penalty', 1.1),
-                "num_predict": options.get('maxTokens', 2048),
-                "num_ctx": options.get('contextLength', 2048)
+                "top_k": options.get('topK', 40)
             }
         }
-        
-        # Add system prompt if provided
+
         if 'system' in data:
-            payload['system'] = data['system']
-            
-        # Add web search functionality if enabled
+            payload['history'].insert(0, {"role": "apiMessage", "content": data['system']})
+        
         web_search_results = []
         webSearchNote = ""
-        if web_search:
-            # Find the most recent user message
-            user_messages = [msg['content'] for msg in messages if msg['role'] == 'user']
-            if user_messages:
-                last_user_message = user_messages[-1]
-                
-                # Perform web search
-                try:
-                    with DDGS() as ddgs:
-                        results = ddgs.text(last_user_message, max_results=5)
-                        web_search_results = [
-                            {
-                                "title": r["title"],
-                                "url": r["href"],
-                                "snippet": r["body"],
-                                "domain": urlparse(r["href"]).netloc
-                            } for r in results
-                        ]
-                except Exception as e:
-                    app.logger.error(f"Web search error: {str(e)}")
-                
-                # Format search results for AI context
-                if web_search_results:
-                    webSearchNote = "I found these sources to help answer your question:"
-                    search_context = "### Current Web Search Results:\n"
-                    search_context += "Use these search results to provide a direct answer to the user's question. " \
-                                     "Cite sources using their domain names in parentheses. " \
-                                     "When possible, provide specific facts, figures, or quotes from the sources.\n\n"
-                    
-                    for i, result in enumerate(web_search_results):
-                        search_context += f"{i+1}. [{result['title']}]({result['url']})\n"
-                        search_context += f"   Summary: {result['snippet']}\n\n"
-                    
-                    # Add search context to the payload
-                    if 'system' in payload:
-                        payload['system'] += "\n\n" + search_context
-                    else:
-                        payload['system'] = search_context
-            else:
-                webSearchNote = "No relevant sources found for your question"
+        if web_search and question:
+            try:
+                with DDGS() as ddgs:
+                    results = ddgs.text(question, max_results=5)
+                    web_search_results = [
+                        {
+                            "title": r["title"],
+                            "url": r["href"],
+                            "snippet": r["body"],
+                            "domain": urlparse(r["href"]).netloc
+                        } for r in results
+                    ]
+            except Exception as e:
+                app.logger.error(f"Web search error: {str(e)}")
+
+            if web_search_results:
+                webSearchNote = "I found these sources to help answer your question:"
+                search_context = "### Current Web Search Results:\n"
+                search_context += "Use these search results to provide a direct answer to the user's question. " \
+                                 "Cite sources using their domain names in parentheses. " \
+                                 "When possible, provide specific facts, figures, or quotes from the sources.\n\n"
+
+                for i, result in enumerate(web_search_results):
+                    search_context += f"{i+1}. [{result['title']}]({result['url']})\n"
+                    search_context += f"   Summary: {result['snippet']}\n\n"
+
+                payload['history'].insert(0, {"role": "apiMessage", "content": search_context})
         
         # Process file content if referenced in messages
         for msg in messages:
@@ -155,10 +158,12 @@ def chat():
                         file_content = extract_text_from_file(filepath)
                         msg['content'] += f"\n\nFile content:\n{file_content}"
         
-        response = requests.post(ollama_url, json=payload)
+        headers = {'Content-Type': 'application/json'}
+        if FLOWISE_API_KEY:
+            headers['Authorization'] = f'Bearer {FLOWISE_API_KEY}'
+        response = requests.post(f"{FLOWISE_URL}/prediction/{flow_id}", json=payload, headers=headers)
         response.raise_for_status()
-        
-        # Add web search results to response
+
         response_data = response.json()
         if web_search_results:
             response_data['web_search_results'] = web_search_results
