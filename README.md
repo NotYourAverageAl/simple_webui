@@ -24,11 +24,6 @@ A modern web-based chat interface for interacting with Flowise agents. It suppor
 - 🕓 **Conversation History** — Manage chat sessions with history tracking  
 - 💡 **Code Highlighting** — Automatic syntax highlighting for code snippets  
 
----
-## preview
-🎬 [Click here to watch the demo on YouTube](https://youtu.be/SpfmQEIuSuE)
-
-
 
 ---
 ## ⚙️ Prerequisites
