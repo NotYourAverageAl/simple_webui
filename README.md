@@ -1,14 +1,14 @@
 
 
-# 💬 Ollama Chat - Web Interface
+# 💬 Flowise Chat - Web Interface
 
-A modern web-based chat interface for interacting with Ollama models, featuring model selection, file uploads, web search integration, and customizable themes.
+A modern web-based chat interface for interacting with Flowise agents. It supports agent selection, file uploads, web search integration and customizable themes.
 
 ---
 
 ## ✨ Features
 
-- 🔍 **Model Selection** — Choose from available Ollama models  
+- 🔍 **Agent Selection** — Choose from your available Flowise chatflows
 - 📎 **File Uploads** — Process PDF, DOCX, and TXT files  
 - 🌐 **Web Search** — Integrated DuckDuckGo search for enhanced research not responce  
 - 🎨 **Theming** — 7 unique visual themes including:
@@ -34,7 +34,7 @@ A modern web-based chat interface for interacting with Ollama models, featuring 
 ## ⚙️ Prerequisites
 
 - 🐍 Python 3.8+  
-- 🧠 Ollama installed and running (`ollama serve`)  
+- 🧠 Flowise running (`FLOWISE_URL` should point to your instance)
 - 🧰 Node.js (for development mode)
 
 ---
@@ -73,6 +73,10 @@ Create a `.env` file in the project root with optional settings:
 FLASK_DEBUG=1
 UPLOAD_FOLDER=uploads
 PORT=5001
+USERNAME=admin
+PASSWORD=changeme
+FLOWISE_URL=http://localhost:3000
+FLOWISE_API_KEY=
 ```
 
 ---
@@ -83,6 +87,13 @@ PORT=5001
 
 ```bash
 python app.py
+```
+
+### Docker
+
+```bash
+docker build -t flowise-chat .
+docker run -p 5001:5001 --env-file .env flowise-chat
 ```
 
 ### 2. 🌐 Access the web interface
@@ -147,8 +158,8 @@ ollama-web-chat/
 
 ### Common Issues
 
-* ❌ **"No models found"**
-  Make sure Ollama is running with `ollama serve`
+* ❌ **"No agents found"**
+  Ensure your Flowise instance is running and accessible
 
 * ⚠️ **File upload errors**
   Check if the `uploads/` directory exists and has proper write permissions
@@ -191,7 +202,7 @@ This project is licensed under the **MIT License**. See [`LICENSE`](LICENSE) for
 
 ---
 
-> ⚠️ **Note**: This project is not officially affiliated with Ollama. It is a community-created interface designed to extend Ollama's usability via a web interface.
+> ⚠️ **Note**: This project is not officially affiliated with Flowise. It is a community-created interface designed to interact with Flowise agents via a web interface.
 
 ## ☕ Support My Work
 
